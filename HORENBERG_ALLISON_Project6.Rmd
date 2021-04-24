@@ -1,0 +1,186 @@
+---
+title: "HORENBERG_ALLISON_Project6"
+author: "Allison Horenberg"
+date: "4/14/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(SeuratDisk)
+library(Seurat)
+library(SeuratObject)
+library(scmap)
+library(SingleCellExperiment)
+library(aricode)
+library(dplyr)
+library(pheatmap)
+library(gam)
+library(RColorBrewer)
+library(rgl)
+library(slingshot)
+library(ggplot2)
+```
+
+```{r}
+xdata <- LoadH5Seurat("/Users/allisonhorenberg/Desktop/P6_Files/TS_Ref_2021.h5seurat")
+query <- LoadH5Seurat("/Users/allisonhorenberg/Desktop/P6_Files/Lu_Query_2021.h5seurat")
+xdata <- NormalizeData(xdata, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+# Cluster and cell type data to run slingshot
+xdata <- FindVariableFeatures(xdata, selection.method = "vst", nfeatures = 2000)
+xdata <- ScaleData(xdata)
+xdata <- RunPCA(xdata, features = VariableFeatures(object = xdata))
+ElbowPlot(xdata)
+xdata <- FindNeighbors(xdata, dims = 1:7)
+xdata <- FindClusters(xdata, resolution = 0.5)
+xdata <- RunUMAP(xdata, dims = 1:7)
+DimPlot(xdata, reduction = "umap")
+DimPlot(xdata, reduction = "pca", dims = c(1,2))
+clusterCellType <- data.frame(xdata$cell_type, xdata$seurat_clusters)
+clusterLabels <- c()
+for (cluster in as.numeric(levels(xdata))){
+  clusterSubset <- clusterCellType[which(clusterCellType$xdata.seurat_clusters == cluster),]
+  allLabels <- clusterSubset[,1]
+  clusterLabels <- c(clusterLabels, names(sort(table(allLabels), decreasing = T))[1])
+}
+names(clusterLabels) <- levels(xdata)
+xdata <- RenameIdents(xdata,  clusterLabels)
+DimPlot(xdata, reduction = "umap", label = FALSE, pt.size = 0.4)
+
+```
+```{r}
+# Run slingshot to generate lineages
+rd1 <- xdata@reductions$pca@cell.embeddings[,1:7]
+cl1 <- xdata$seurat_clusters
+lin1 <- getLineages(rd1, cl1, start.clus = '10', end.clus = '0')
+plot(rd1, col = brewer.pal(9,"Set1")[cl1], asp = 1, pch = 16)
+lines(SlingshotDataSet(lin1), lwd = 3, col = 'black', show.constraints = TRUE)
+ESCtoENDO <- lin1@lineages$Lineage6
+```
+
+```{r}
+# Input: scRNAseq data, slingshot lineage from starting cell type to ending cell type
+perturbations <- c()
+for (start in 1:3){
+  
+  cellsPerCluster <- table(xdata$seurat_clusters)
+  endNum <- cellsPerCluster[ESCtoENDO[start + 1]]
+  endInd <- c()
+  counter <- 1
+  for (cell in xdata$seurat_clusters){
+    if (cell == ESCtoENDO[start + 1]){
+      endInd <- c(endInd, counter)
+    }
+    counter <- counter + 1  
+  }
+  endDat <- xdata[,endInd]
+  endAvg <- head(AverageExpression(object = endDat))
+  
+  startNum <- cellsPerCluster[ESCtoENDO[start]]
+  startInd <- c()
+  counter <- 1
+  for (cell in xdata$seurat_clusters){
+    if (cell == ESCtoENDO[start]){
+      startInd <- c(startInd, counter)
+    }
+    counter <- counter + 1  
+  }
+  startDat <- xdata[,startInd]
+  startAvg <- head(AverageExpression(object = startDat))
+
+  combineDat <- xdata[,c(startInd, endoInd)]
+  #combineDat <- FindVariableFeatures(combineDat, selection.method = "vst", nfeatures = 5000)
+  #varGenes <- combineDat@assays$RNA@var.features
+  #endAvg <- endAvg$RNA #[varGenes,]
+  #startAvg <- startAvg$RNA #[varGenes,]
+  
+  end.cluster.markers <- FindMarkers(xdata, ident.1 = ESCtoENDO[start + 1], ident.2 = ESCtoENDO[start], min.pct = 0.5)
+  upregulated <- rownames(end.cluster.markers)[1:10]
+  diffFeat <- unlist(startAvg) - unlist(endAvg)
+  names(diffFeat) <- rownames(endAvg$RNA)
+  downregulated <- names(sort(diffFeat, decreasing = T)[1:10])
+                   
+  end <- unlist(endAvg)
+  start <- unlist(startAvg)
+  initialAMI <- AMI(end, start)
+  
+  upregAMI <- c()
+  for (factor in upregulated){
+    maximum <- max(start)
+    factorInd <- which(rownames(startAvg$RNA) == factor)
+    overexpress <- startAvg$RNA
+    overexpress[factorInd] <- maximum
+    overexpress <- as.list(overexpress)
+    newAMI <- AMI(end, unlist(overexpress))
+    upregAMI <- c(upregAMI, newAMI)
+  }
+  names(upregAMI) <- upregulated
+  
+  downregAMI <- c()
+  for (factor in downregulated){
+    factorInd <- which(rownames(startAvg$RNA) == factor)
+    knockdown <- startAvg$RNA
+    knockdown[factorInd] <- 0
+    knockdown <- as.list(knockdown)  
+    newAMI <- AMI(end, unlist(knockdown))
+    downregAMI <- c(downregAMI, newAMI)
+  }
+  names(downregAMI) <- downregulated
+
+  finalUpRNA <- c()
+  count <- 1
+  for (newAMI in upregAMI){
+    if (newAMI > initialAMI){
+      finalUpRNA <- c(finalUpRNA, names(upregAMI)[count])
+    }
+    count <- count + 1
+  }
+  if (is.null(finalUpRNA)){
+    finalUpRNA <- names(upregAMI)
+  }
+  
+  finalDownRNA <- c()
+  count <- 1  
+  for (newAMI in downregAMI){  
+    if (newAMI > initialAMI){
+      finalDownRNA <- c(finalDownRNA, names(downregAMI)[count])
+    }
+    count <- count + 1
+  }
+  if (is.null(finalDownRNA)){
+    finalDownRNA <- names(downregAMI)
+  }
+  
+  if (!is.null(finalUpRNA)){
+    names(finalUpRNA) <- rep(1, length(finalUpRNA))
+  }
+  if (!is.null(finalDownRNA)){
+      names(finalDownRNA) <- rep(-1, length(finalDownRNA))
+  }
+  finalRNA <- c(finalUpRNA, finalDownRNA)
+  perturbations <- list(perturbations, finalRNA)
+}
+```
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("SQLite")
+
+av <- available.packages(filters=list())
+av[av[, "Package"] == 'SQLite', ]
+inst <- packageStatus()$inst
+inst[inst$Status != "ok", c("Package", "Version", "Status")]
+
+```
+```{r}
+
+```
+
