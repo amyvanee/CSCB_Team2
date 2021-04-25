@@ -44,22 +44,6 @@ queryData <- LoadH5Seurat("Lu_Query_2021.h5seurat")
 # convert query to be mouse
 oTab <- read.csv("oTab.csv")
 
-# newGeneNames <- c()
-# # for each human gene, find corresponding mouse gene
-# for (gene in rownames(queryData@assays$RNA@counts)){
-#   # gene in human
-#   if (gene %in% oTab[, 2]){
-#     # find index where gene matches
-#     geneInd <- which(oTab[,2] == gene)
-#     # add corresponding gene from mouse
-#     gene2add <- oTab[geneInd, 3]
-#   }
-#   else{
-#     gene2add <- gene
-#   }
-#   newGeneNames <- c(newGeneNames, gene2add)
-# }
-
 
 convertR <- function(query, analog, dir){ 
   
@@ -108,14 +92,29 @@ queryData <- CreateSeuratObject(queryExpMat, project = "SeuratProject", assay = 
                                 names.delim = "-", meta.data = queryData@meta.data)
 
 
+# newGeneNames <- c()
+# # for each human gene, find corresponding mouse gene
+# for (gene in rownames(queryData@assays$RNA@counts)){
+#   # gene in human
+#   if (gene %in% oTab[, 2]){
+#     # find index where gene matches
+#     geneInd <- which(oTab[,2] == gene)
+#     # add corresponding gene from mouse
+#     gene2add <- oTab[geneInd, 3]
+#   }
+#   else{
+#     gene2add <- gene
+#   }
+#   newGeneNames <- c(newGeneNames, gene2add)
+# }
+#
 # already done
 # write.csv(as.matrix(queryData@assays$RNA@counts), 'queryData.csv', sep = ',',
-          # row.names = F, col.names = T, quote = F)
+# row.names = F, col.names = T, quote = F)
 
 # expMat <- read.csv('queryData.csv', sep = ',', header = T)
 # newGeneNames[2217] = "Cebc7"
 # rownames(expMat) = newGeneNames
-
 
 
 ################################################################################
@@ -237,22 +236,14 @@ train_ind <- sample(seq_len(numcells), size = smp_size)
 # subset Bertie data into training and testing
 extraData<- extraData[, train_ind]
 
-# #---------------------------- prepare and train -------------------------------#
-# # perform feature selection
-# trainData <- selectFeatures(trainData, suppress_plot = FALSE)
-# # feature indexing
-# trainData <- indexCluster(trainData, cluster_col = "celltype")
-
-# # train classifier by run using training data
-# trainData <- celltype(refData, trainData)
-# # test classifier by run using testing data
-# testData <- celltype(refData, testData)
 
 
-
-
+# #------------------------------ pipeline ------------------------------------#
 # run pipeline
 extraData_clusters <- celltype(refData, extraData)[1]
+
+
+
 
 #--------------------------------- accuracy -----------------------------------#
 
@@ -261,18 +252,85 @@ accuracy <- (sum(extraData_clusters$scmap_cluster_labs == extraData$newAnn)) / l
 
 
 
+
+
 #------------------------------------ AUPR ------------------------------------#
 
+# PR curve
+# similarities to endothelial 
 
-# function to produce PR curve 
+# function to produce PR curve for one cellType
+get_PR_point <- function(theta, cellType){
+  
+  cellType <- 'endothelial'
+  
+  # pred is similarities to endothelial
+  pred <- x
+  pred[pred >= theta] <- 1
+  pred[pred != 1] <- 0
+  
+  # convert cellType classifications into binary for each sample
+  actual <- c(length(stVal$description1))
+  actual[stVal$description1 == cellType] <- 1
+  actual[is.na(actual)] <- 0
+  
+  # compute values for PR
+  totalActualPos <- sum(actual)
+  totalActualNeg <- length(actual) - totalActualPos
+  
+  truePosSamples <- actual[actual == 1 & pred == 1]
+  truePos <- length(truePosSamples)
+  
+  trueNegSamples <- actual[actual == 0 & pred == 0]
+  trueNeg <- length(trueNegSamples)
+  
+  falseNeg <- (length(pred) - sum(pred)) - trueNeg
+  falsePos <- sum(pred) - truePos
+  
+  # get recall
+  recall <- truePos / (truePos + falseNeg)
+  
+  # get precision
+  precision <- truePos / (truePos + falsePos)
+  
+  return(c(recall, precision))
+}
 
-# dat <- data.frame(truth = extraData$newAnn, Class1 = extraData_clusters$scmap_cluster_siml, 
-#                           predicted = extraData_clusters$scmap_cluster_labs)
-# 
-# predictions <- drop_na(predictions)
-# AUPR <- pr_curve(predictions, truth, Class1)
+AUC <- 0
 
+# vectors of x and y points for one PR graph
+precision_values <- c()
+recall_values <- c()
 
+# change threshold to create curve
+for (theta in seq(0, 1, by=0.001)){
+  PR_point <- get_PR_point(theta,  row.names(Val_pred)[i])
+  recall_values <- c(recall_values, PR_point[1])
+  precision_values <- c(precision_values, PR_point[2])
+}
+
+# get auc and remove any NaN
+recall_values <- na.omit(recall_values)
+precision_values <- na.omit(precision_values)
+
+# make sure lengths match up
+if (length(recall_values) > length(precision_values)){  
+  recall_values <- head(recall_values, (length(precision_values) - length(recall_values)))
+} else if (length(recall_values) < length(precision_values)){  
+  precision_values <- head(precision_values, (length(recall_values) - length(precision_values)))
+}
+
+# find AUC
+trapezoid <- function(x,y) {
+  sum(diff(x)*(y[-1]+y[-length(y)]))/2
+}
+AUC <- trapezoid(recall_values, precision_values) *-1
+
+# plot final graph
+plot(recall_values, precision_values, 
+     width = 15, height = 6, 
+     main = c("PR Curve for Similarity to Endothelial Cell, AUPR: ", AUC, "Accuracy:", accuracy), 
+     xlab = "Recall", ylab = "Precision")
 
 
 
