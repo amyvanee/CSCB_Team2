@@ -1,0 +1,251 @@
+---
+title: "CSCB_Proj6_Code"
+author: "Travis Brady"
+date: "4/16/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Library}
+library(hdf5r)
+library(Seurat)
+library(SeuratDisk)
+library(SingleCellExperiment)
+library(gam)
+library(scales)
+library(RaceID)
+source("helper_2.R")
+source("helper_6.R")
+```
+
+```{r Data}
+query.h5 <- LoadH5Seurat("Lu_Query_2021.h5seurat")
+ref.h5 <- LoadH5Seurat("TS_Ref_2021.h5seurat")
+expTMraw <-utils_loadObject("~/Documents/Johns Hopkins/Courses/Computational Stem Cell Biology/Projects/CSCB_Project_6/6k_beadpurfied_raw.rda")
+```
+
+
+```{r Create CSV w/ Raw Counts}
+# write.csv(as.matrix(query.h5@assays$RNA@counts),
+#           'query_counts.csv', sep  = ',',
+#           row.names = T, col.names = T, quote = F)
+
+# write.csv(as.matrix(ref.h5@assays$RNA@counts),
+#           'ref_counts.csv', sep  = ',',
+#           row.names = T, col.names = T, quote = F)
+
+# write.csv(as.matrix(expTMraw),
+#           'outside_counts.csv', sep  = ',',
+#           row.names = T, col.names = T, quote = F)
+```
+
+```{r Import CSV w/ Counts}
+
+anno <- read.csv("oTab.csv")
+query_counts <- read.csv("query_counts.csv", sep=",", header=TRUE)
+ref_counts <- read.csv("ref_counts.csv", sep=",", header=TRUE)
+out_counts <- read.csv("outside_counts.csv", sep=",", header=TRUE)
+rownames(query_counts) = query_counts[,1]
+rownames(ref_counts) = ref_counts[,1]
+rownames(out_counts) = out_counts[,1]
+
+# prepare data  for non-STEMID  analayses
+
+# qry <- query_counts[grep("ERCC",rownames(query_counts),invert=TRUE),]
+# ref <- ref_counts[grep("ERCC",rownames(ref_counts),invert=TRUE),]
+
+#  prepare  data  for all pipelines by removing ERCC spike-ins, first column (names)
+qryprdata <- query_counts[grep("ERCC",rownames(query_counts),invert=TRUE),-1]
+refprdata  <- ref_counts[grep("ERCC",rownames(ref_counts),invert=TRUE),-1]
+outprdata <- out_counts[grep("ERCC",rownames(out_counts),invert=TRUE),-1]
+```
+
+# Notes
+
+STEMID is based on [Grun et al 2016](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4985539/). It extrapolates cell fate srom single cell RNA sequencing data based on two observations/assumptions:
+
+- stem cells produce a larger number of branches when used in TI
+- the transcriptome specificity of stem cells tends to be lower (promiscuous: less defined genes)
+
+# STEMID
+
+
+```{r}
+sc <- SCseq(qryprdata)
+```
+
+```{r}
+sc <- filterdata(sc, mintotal = 2000, minexpr = 5, minnumber = 5)
+```
+
+```{r}
+fdata <- getfdata(sc)
+```
+
+```{r}
+sc <- compdist(sc,metric="pearson")
+```
+
+```{r}
+sc <- clustexp(sc, samp = 1000, clustnr = 10)
+```
+
+```{r}
+plotsaturation(sc,disp=FALSE)
+```
+
+
+# Conversion for Comparison
+
+```{r Remove low Corr Genes}
+anno = anno[anno$corrs > 0.5,]
+```
+
+```{r Trim Query/Reference Counts}
+
+# trim both data sets so that they are:
+  # # using murine gene names
+  # # ignore any genes that cannot be converted (i.e. low correlation or missing from 'oTab.csv')
+qryTrim = convertR(query = qryprdata, dir = 'mouse')
+refTrim = convertR(query = refprdata, dir = 'human')
+refTrim = convertR(query = refTrim, dir = 'mouse')
+outTrim = convertR(query = outprdata, dir = 'mouse')
+```
+
+
+
+```{r Report Dimensions}
+
+# the trimmed reference data has 15302 genes, ~7500 cells
+# the trimmed query data has 14291 genes, ~10k cells
+dim(refTrim)
+dim(qryTrim)
+dim(outTrim)
+```
+
+RaceID will be used as a point of comparison for this cell fate determinant
+
+Many types of pluripotent stem (PS) cells'
+
+- (naive) ES cells are derived from pre-implantation embryos
+- (primed) EpiSCs are derived from later, epiblast tissues
+- 
+
+```{r Genes and Label Extraction}
+
+# extract true labels for reference data
+
+# rename (get rid of '-', replace with '.')
+cellTypes = ref.h5$cell_type
+ctn = names(cellTypes)
+ctn = gsub("-", ".", ctn)
+ctn = gsub(";", ".", ctn)
+names(cellTypes) = ctn
+
+# murine equivalents of key genes
+ESkeyGenes = c('Sox2', 'Pou5f1', 'Tbx3', 'Gbx2')
+```
+
+
+```{r AvgEXP Matrix}
+# create a list with the mean expression profile for each cell type across all genes
+AvgEXP = list()
+allTypes = levels(cellTypes)
+for(type in allTypes){
+  sub = subsetR(type = type)
+  avgexp = rowMeans(sub)
+  AvgEXP =  append(AvgEXP, list(avgexp))
+}
+names(AvgEXP) = allTypes
+
+# convert to matrix
+AvgEXPmat <- matrix(unlist(AvgEXP), nrow = 15302)
+
+# define matrix column names (cell types)
+colnames(AvgEXPmat) = allTypes
+
+# define row names (genes)
+rownames(AvgEXPmat) = names(AvgEXP[[1]])
+
+# scale/normalize data for better comparisons
+AvgEXPscaled <- apply(AvgEXPmat, 2, rescale)
+qryscaled <- apply(qryTrim, 2, rescale)
+refscaled <- apply(refTrim, 2, rescale)
+outscaled <- apply(outTrim, 2, rescale)
+```
+
+
+```{r}
+length(rownames(AvgEXPscaled))
+```
+
+
+
+```{r Subset Tables (Brute)}
+glial = subsetR(type = 'Bergmann glial cell')
+CD8T = subsetR(type = 'CD8-positive, alpha-beta T cell')
+ESC = subsetR(type = 'ESC')
+Tcell = subsetR(type = 'T cell')
+astr = subsetR(type = 'astrocyte')
+peri = subsetR(type = 'brain pericyte')
+endo = subsetR(type = 'endothelial cell')
+epen = subsetR(type = 'ependymal cell')
+int = subsetR(type = 'interneuron')
+mac = subsetR(type = 'macrophage')
+NKT = subsetR(type = 'mature NK T cell')
+msNeur = subsetR(type = 'medium spiny neuron')
+microg = subsetR(type = 'microglial cell')
+epi = subsetR(type = 'neuroepithelial cell')
+neuro = subsetR(type = 'neuron')
+neuroSC = subsetR(type = 'neuronal stem cell')
+olig = subsetR(type = 'oligodendrocyte')
+oligPre = subsetR(type = 'oligodendrocyte precursor cell')
+```
+
+```{r Finish Up Avg, Qry, Ref Data}
+
+# scale all data sets so values range between 0 and 1
+# also order rows so genes appear in identical alphanumeric order
+
+avgFin <- AvgEXPscaled[rownames(AvgEXPscaled) %in% rownames(qryscaled),]
+avgFin <- avgFin[order(rownames(avgFin)),]
+qryFin <- qryscaled[rownames(qryscaled) %in% rownames(AvgEXPscaled),]
+qryFin <- qryFin[order(rownames(qryFin)),]
+refFin <- refscaled[rownames(refscaled) %in% rownames(qryscaled),]
+refFin <- refFin[order(rownames(refFin)),]
+outFin <- outscaled[rownames(outscaled) %in% rownames(qryscaled),]
+outFin <- outFin[order(rownames(outFin)),]
+```
+
+```{r}
+dim(avgFin)
+dim(qryFin)
+dim(refFin)
+dim(outFin)
+```
+
+```{r}
+
+# when comparing to outsourced data, be sure to restrict comparison to those genes that overlap
+
+# comparR(query = outFin[rownames(outFin) %in% rownames(avgFin),], 
+#         cell = 3576, 
+#         avg = avgFin[rownames(avgFin) %in% rownames(outFin),])
+```
+
+```{r}
+tes <- comparR(query = qryFin, cell = 30)
+```
+
+```{r}
+sum(tes$`Bergmann glial cell`)
+```
+
+
+
+
+
