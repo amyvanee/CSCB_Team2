@@ -190,7 +190,7 @@ celltype <- function(refSeurat, querySeurat){
                               index_list = list(metadata(rSCE)$scmap_cluster_index))
 
   
-  # for loop to find best clustering
+  # for loop to find best clustering with fewest unassigned
   for (i in seq(0.1, 1, 0.01)){
     newPred <- scmapCluster(projection = qSCE, 
                             index_list = list(metadata(rSCE)$scmap_cluster_index), 
@@ -210,7 +210,13 @@ celltype <- function(refSeurat, querySeurat){
   names(clusterLabels) <- levels(querySeurat)
   querySeurat <- RenameIdents(querySeurat,  clusterLabels)
 
+  
+  # #-------------------------- UMAP show clusters -----------------------------#
 
+  DimPlot(spangler, group.by = 'Idents', reduction = "umap")
+  
+  
+  # return SCMAP output and query Seurat labelled
   return (data.frame(currentPred, querySeurat))
   
   
@@ -247,7 +253,7 @@ extraData_clusters <- celltype(refData, extraData)[1]
 
 #--------------------------------- accuracy -----------------------------------#
 
-# find accuracy
+# find accuracy by compare predictions to actual labels
 accuracy <- (sum(extraData_clusters$scmap_cluster_labs == extraData$newAnn)) / length(extraData@meta.data$cell)
 
 
@@ -260,18 +266,18 @@ accuracy <- (sum(extraData_clusters$scmap_cluster_labs == extraData$newAnn)) / l
 # similarities to endothelial 
 
 # function to produce PR curve for one cellType
-get_PR_point <- function(theta, cellType){
+get_PR_point <- function(theta, similarities, trueTypes){
   
   cellType <- 'endothelial'
   
   # pred is similarities to endothelial
-  pred <- x
+  pred <- similarities
   pred[pred >= theta] <- 1
   pred[pred != 1] <- 0
   
   # convert cellType classifications into binary for each sample
-  actual <- c(length(stVal$description1))
-  actual[stVal$description1 == cellType] <- 1
+  actual <- c(length(trueTypes))
+  actual[trueTypes == cellType] <- 1
   actual[is.na(actual)] <- 0
   
   # compute values for PR
@@ -296,7 +302,6 @@ get_PR_point <- function(theta, cellType){
   return(c(recall, precision))
 }
 
-AUC <- 0
 
 # vectors of x and y points for one PR graph
 precision_values <- c()
@@ -304,7 +309,11 @@ recall_values <- c()
 
 # change threshold to create curve
 for (theta in seq(0, 1, by=0.001)){
-  PR_point <- get_PR_point(theta,  row.names(Val_pred)[i])
+  
+  # make sure input similarities to EC specifically!!
+  PR_point <- get_PR_point(theta,  extraData_clusters$scmap_cluster_labs, extraData$newAnn)
+  
+  # get coordinate points
   recall_values <- c(recall_values, PR_point[1])
   precision_values <- c(precision_values, PR_point[2])
 }
