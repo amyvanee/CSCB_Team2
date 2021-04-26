@@ -64,6 +64,11 @@ subsetR <- function(data = refTrim, labels = cellTypes, type = 'oligodendrocyte'
   data[, ids]
 }
 
+subsetRQ <- function(data = qryTrim, labels = qryTimes, type = 'HUVEC'){
+  ids = labels[labels == type]
+  data[, ids]
+}
+
 # find (average) differential gene expression between reference type and all reference types
 
 diffMakR <- function(avg = avgFin, cell = '', top = 1000, bot = 50){

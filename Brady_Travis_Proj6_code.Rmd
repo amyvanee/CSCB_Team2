@@ -19,16 +19,29 @@ library(gam)
 library(scales)
 library(RaceID)
 library(tidyverse)
+library(Matrix)
 source("helper_2.R")
 source("helper_6.R")
 ```
 
 ```{r Data}
+download.file(url = 'https://raw.githubusercontent.com/czbiohub/tabula-muris-vignettes/master/data/TM_droplet_metadata.csv', 'droplet_meta.csv')
 query.h5 <- LoadH5Seurat("Lu_Query_2021.h5seurat")
 ref.h5 <- LoadH5Seurat("TS_Ref_2021.h5seurat")
-expTMraw <-utils_loadObject("~/Documents/Johns Hopkins/Courses/Computational Stem Cell Biology/Projects/CSCB_Project_6/6k_beadpurfied_raw.rda")
+tm.droplet.matrix <- readRDS("TM_droplet_mat.rds")
+expTMraw <- utils_loadObject("~/Documents/Johns Hopkins/Courses/Computational Stem Cell Biology/Projects/CSCB_Project_6/6k_beadpurfied_raw.rda")
 ```
 
+```{r More Data}
+counts <- readMM(file = 'matrix.mtx')
+counts <- as(counts, "dgCMatrix")
+barcodes <- read.csv(file = 'barcodes.tsv', header = F)
+barcodes <- t(as.vector(barcodes))
+genes <- read.csv(file = 'genes.tsv', header = F, sep = '\t')
+genes <- t(as.vector(genes[,1]))
+rownames(counts) <- genes
+colnames(counts) <- barcodes
+```
 
 ```{r Create CSV w/ Raw Counts}
 # write.csv(as.matrix(query.h5@assays$RNA@counts),
@@ -42,27 +55,33 @@ expTMraw <-utils_loadObject("~/Documents/Johns Hopkins/Courses/Computational Ste
 # write.csv(as.matrix(expTMraw),
 #           'outside_counts.csv', sep  = ',',
 #           row.names = T, col.names = T, quote = F)
+
+# write.csv(as.matrix(counts),
+#           'droplet_counts.csv', sep  = ',',
+#           row.names = T, col.names = T, quote = F)
 ```
 
 ```{r Import CSV w/ Counts}
 
 anno <- read.csv("oTab.csv")
+
 query_counts <- read.csv("query_counts.csv", sep=",", header=TRUE)
-ref_counts <- read.csv("ref_counts.csv", sep=",", header=TRUE)
-out_counts <- read.csv("outside_counts.csv", sep=",", header=TRUE)
 rownames(query_counts) = query_counts[,1]
+
+ref_counts <- read.csv("ref_counts.csv", sep=",", header=TRUE)
 rownames(ref_counts) = ref_counts[,1]
+
+out_counts <- read.csv("outside_counts.csv", sep=",", header=TRUE)
 rownames(out_counts) = out_counts[,1]
 
-# prepare data  for non-STEMID  analayses
-
-# qry <- query_counts[grep("ERCC",rownames(query_counts),invert=TRUE),]
-# ref <- ref_counts[grep("ERCC",rownames(ref_counts),invert=TRUE),]
+drp_counts <-  read.csv("droplet_counts.csv", sep=",", header=TRUE) 
+rownames(drp_counts) = drp_counts[,1]
 
 #  prepare  data  for all pipelines by removing ERCC spike-ins, first column (names)
 qryprdata <- query_counts[grep("ERCC",rownames(query_counts),invert=TRUE),-1]
 refprdata  <- ref_counts[grep("ERCC",rownames(ref_counts),invert=TRUE),-1]
 outprdata <- out_counts[grep("ERCC",rownames(out_counts),invert=TRUE),-1]
+drpprdata <- drp_counts[grep("ERCC",rownames(drp_counts),invert=TRUE),-1]
 ```
 
 # Notes
@@ -72,31 +91,21 @@ STEMID is based on [Grun et al 2016](https://www.ncbi.nlm.nih.gov/pmc/articles/P
 - stem cells produce a larger number of branches when used in TI
 - the transcriptome specificity of stem cells tends to be lower (promiscuous: less defined genes)
 
-# STEMID
+Many types of pluripotent stem (PS) cells
 
+- (naive) ES cells are derived from pre-implantation embryos
+- (primed) EpiSCs are derived from later, epiblast tissues
+
+# STEMID
 
 ```{r}
 sc <- SCseq(qryprdata)
-```
-
-```{r}
 sc <- filterdata(sc, mintotal = 2000, minexpr = 5, minnumber = 5)
-```
-
-```{r}
-fdata <- getfdata(sc)
-```
-
-```{r}
 sc <- compdist(sc,metric="pearson")
-```
-
-```{r}
-sc <- clustexp(sc, samp = 1000, clustnr = 10)
-```
-
-```{r}
-plotsaturation(sc,disp=FALSE)
+sc <- clustexp(sc,cln=7,sat=FALSE)
+sc <- findoutliers(sc)
+sc <- comptsne(sc)
+sc <- compumap(sc)
 ```
 
 
@@ -115,9 +124,9 @@ qryTrim = convertR(query = qryprdata, dir = 'mouse')
 refTrim = convertR(query = refprdata, dir = 'human')
 refTrim = convertR(query = refTrim, dir = 'mouse')
 outTrim = convertR(query = outprdata, dir = 'mouse')
+drpTrim = convertR(query  = drpprdata, dir = 'human')
+drpTrim = convertR(query  = drpTrim, dir = 'mouse')
 ```
-
-
 
 ```{r Report Dimensions}
 
@@ -126,17 +135,16 @@ outTrim = convertR(query = outprdata, dir = 'mouse')
 dim(refTrim)
 dim(qryTrim)
 dim(outTrim)
+dim(drpTrim)
 ```
 
-RaceID will be used as a point of comparison for this cell fate determinant
 
-Many types of pluripotent stem (PS) cells'
 
-- (naive) ES cells are derived from pre-implantation embryos
-- (primed) EpiSCs are derived from later, epiblast tissues
-- 
+# Create Fate Scores
 
-```{r Genes and Label Extraction}
+## Find Labels
+
+```{r Label Extraction}
 
 # extract true labels for reference data
 
@@ -152,6 +160,7 @@ names(cellTypes) = ctn
 ESkeyGenes = c('Sox2', 'Pou5f1', 'Tbx3', 'Gbx2')
 ```
 
+##  Create Average Matrix
 
 ```{r AvgEXP Matrix}
 # create a list with the mean expression profile for each cell type across all genes
@@ -178,8 +187,8 @@ AvgEXPscaled <- apply(AvgEXPmat, 2, rescale)
 qryscaled <- apply(qryTrim, 2, rescale)
 refscaled <- apply(refTrim, 2, rescale)
 outscaled <- apply(outTrim, 2, rescale)
+drpscaled <- apply(drpTrim, 2, rescale)
 ```
-
 
 ```{r Subset Tables (Brute)}
 glial = subsetR(type = 'Bergmann glial cell')
@@ -202,31 +211,10 @@ olig = subsetR(type = 'oligodendrocyte')
 oligPre = subsetR(type = 'oligodendrocyte precursor cell')
 ```
 
+## Order Genes and Extract Fate
 
+```{r Finish Up Avg, Qry, Ref and Drp Data}
 
-
-
-```{r}
-tes = subsetR(data = qryTrim, labels = qryTimes, type ='IMR90_iBMEC_D0')
-```
-```{r}
-levels(qryTimes)
-```
-
-```{r}
-subsetRQ(type = )
-```
-
-
-```{r}
-qryTrim[,(qryTimes) == 'HUVEC']
-```
-
-
-
-```{r Finish Up Avg, Qry, Ref Data}
-
-# scale all data sets so values range between 0 and 1
 # also order rows so genes appear in identical alphanumeric order
 
 avgFin <- AvgEXPscaled[rownames(AvgEXPscaled) %in% rownames(qryscaled),]
@@ -237,9 +225,9 @@ refFin <- refscaled[rownames(refscaled) %in% rownames(qryscaled),]
 refFin <- refFin[order(rownames(refFin)),]
 outFin <- outscaled[rownames(outscaled) %in% rownames(qryscaled),]
 outFin <- outFin[order(rownames(outFin)),]
-```
+drpFin <- drpscaled[rownames(drpscaled) %in% rownames(AvgEXPscaled),]
+drpFin <- drpFin[order(rownames(drpFin)),]
 
-```{r}
 dim(avgFin)
 dim(qryFin)
 dim(refFin)
@@ -250,13 +238,18 @@ dim(outFin)
 
 # Run only ONCE, takes  a while
 
+
+#  Query
+
 qryFate = vector(mode = 'list', length = ncol(qryFin))
 for(i in 1:ncol(qryFin)){
-  # printt(i)
+  # print(i)
   fate = totalR(comparR(query = qryFin, cell = i))
   qryFate[i] = list(fate)
 }
 names(qryFate) = colnames(qryFin)
+
+# Reference
 
 refFate = vector(mode = 'list', length = ncol(refFin))
 for(i in 1:ncol(refFin)){
@@ -265,6 +258,8 @@ for(i in 1:ncol(refFin)){
   refFate[i] = list(fate)
 }
 names(refFate) = colnames(refFin)
+
+# Outside (1)
 
 outFate = vector(mode = 'list', length = ncol(outFin))
 outq = outFin[rownames(outFin) %in% rownames(avgFin),]
@@ -275,21 +270,39 @@ for(i in 1:ncol(outFin)){
   outFate[i] = list(fate)
 }
 names(outFate) = colnames(outFin)
+
+# Droplet - Outside (2)
+
+drpFate = vector(mode = 'list', length = ncol(drpFin))
+for(i in 1:ncol(drpFin)){
+  # print(i)
+  fate = totalR(comparR(query = drpFin, cell = i))
+  drpFate[i] = list(fate)
+}
+names(drpFate) = colnames(drpFin)
 ```
 
 ```{r Save Fate Scores}
 saveRDS(qryFate, file = 'Query_fate_scores.rds')
 saveRDS(refFate, file = 'Reference_fate_scores.rds')
 saveRDS(outFate, file = 'Outside_fate_scores.rds')
+saveRDS(drpFate, file = 'Droplet_fate_scores.rds')
 ```
+
+# Results
 
 ```{r Load Fate Scores}
 qryFate = readRDS(file = 'Query_fate_scores.rds')
 refFate = readRDS(file = 'Reference_fate_scores.rds')
 outFate = readRDS(file = 'Outside_fate_scores.rds')
+drpFate = readRDS(file = 'Droplet_fate_scores.rds')
 ```
 
 ```{r Extract Labels for Each Time in Query}
+
+# each of these (D0, D1, etc. in query) is the list of names with that specific label
+
+# some rownames were made to drop underscores and replace with dashes, so introduced a mismatch in names, should have  done this earlier with the full list of names, but  fixing it here
 
 levels(qryTimes)
 D0 = names(qryTimes[qryTimes == "IMR90_iBMEC_D0"])
@@ -320,11 +333,9 @@ HUVEC = names(qryTimes[qryTimes == "HUVEC"])
 HUVEC = gsub("-", ".", HUVEC)
 ```
 
-
-
-
-
 ```{r Extract Labels for Each Type in Reference}
+
+# each of these (glial, CD8T, etc. in reference) is the list of names with to that specific label
 
 glial = names(cellTypes[cellTypes == 'Bergmann glial cell'])
 CD8T = names(cellTypes[cellTypes == 'CD8-positive, alpha-beta T cell'])
@@ -417,49 +428,36 @@ REFT = c(averageR(scor = glial_exp, typ = 'ESC'),
 names(REFT) = levels(cellTypes)
 ```
 
-
-```{r}
+```{r Plot Query Data as Points}
 qry_bind = cbind(QRT[2:7], c(0,3,6,11,16,50))
 colnames(qry_bind) = c('score', 'day')
 qry_bind = as.data.frame(qry_bind)
+
+query_plots <- ggplot(data = qry_bind, mapping = aes(x = day, y = score))
+query_plots + geom_point(color = 'blue')
+
+dev.copy(pdf, 'query_scores.pdf')
+dev.off()
 ```
 
-```{r}
-query_plots <- ggplot(data = qry_bind, mapping = aes(x = day, y = score))
-query_plots + geom_point()
-```
-```{r}
+```{r Plot Reference Data as Bars}
 ref_bind = cbind(REFT, names(REFT))
 colnames(ref_bind) = c('score', 'type')
 ref_bind = as.data.frame(ref_bind)
+ref_bind$score = as.numeric(ref_bind$score)
+ref_bind$type <- factor(ref_bind$type, levels = ref_bind[order(ref_bind$score, decreasing = T),]$type)
+# ref_bind$type <- factor(ref_bind$type, levels = ref_bind[order(ref_bind$score),])
+# positions = rownames(ref_bind[order(ref_bind$score, decreasing = T),])
 
-ref_plots <- ggplot(data = ref_bind, mapping = aes(x = type, y = score))
-ref_plots + geom_point()
+ref_plots <- ggplot(data = ref_bind, aes(x = type, y = score))
+ref_plots +
+  geom_bar(stat = 'identity', fill = 'blue') +
+  theme(axis.text.x = element_text(angle = 80, vjust = 0.95, hjust=1)) +
+  scale_y_continuous(breaks=seq(0, 0.3, 0.05))
+
+dev.copy(pdf, 'ref_scores.pdf')
+dev.off()
 ```
-
-
-
-
-
-```{r}
-extractR(index = 10)
-```
-
-
-```{r}
-outFate
-```
-
-
-
-
-
-
-
-
-
-
-
 
 
 
