@@ -18,6 +18,7 @@ library(SingleCellExperiment)
 library(gam)
 library(scales)
 library(RaceID)
+library(tidyverse)
 source("helper_2.R")
 source("helper_6.R")
 ```
@@ -141,6 +142,7 @@ Many types of pluripotent stem (PS) cells'
 
 # rename (get rid of '-', replace with '.')
 cellTypes = ref.h5$cell_type
+qryTimes = query.h5$sample
 ctn = names(cellTypes)
 ctn = gsub("-", ".", ctn)
 ctn = gsub(";", ".", ctn)
@@ -179,12 +181,6 @@ outscaled <- apply(outTrim, 2, rescale)
 ```
 
 
-```{r}
-length(rownames(AvgEXPscaled))
-```
-
-
-
 ```{r Subset Tables (Brute)}
 glial = subsetR(type = 'Bergmann glial cell')
 CD8T = subsetR(type = 'CD8-positive, alpha-beta T cell')
@@ -205,6 +201,28 @@ neuroSC = subsetR(type = 'neuronal stem cell')
 olig = subsetR(type = 'oligodendrocyte')
 oligPre = subsetR(type = 'oligodendrocyte precursor cell')
 ```
+
+
+
+
+
+```{r}
+tes = subsetR(data = qryTrim, labels = qryTimes, type ='IMR90_iBMEC_D0')
+```
+```{r}
+levels(qryTimes)
+```
+
+```{r}
+subsetRQ(type = )
+```
+
+
+```{r}
+qryTrim[,(qryTimes) == 'HUVEC']
+```
+
+
 
 ```{r Finish Up Avg, Qry, Ref Data}
 
@@ -228,22 +246,218 @@ dim(refFin)
 dim(outFin)
 ```
 
+```{r Extract quasi-fate}
+
+# Run only ONCE, takes  a while
+
+qryFate = vector(mode = 'list', length = ncol(qryFin))
+for(i in 1:ncol(qryFin)){
+  # printt(i)
+  fate = totalR(comparR(query = qryFin, cell = i))
+  qryFate[i] = list(fate)
+}
+names(qryFate) = colnames(qryFin)
+
+refFate = vector(mode = 'list', length = ncol(refFin))
+for(i in 1:ncol(refFin)){
+  # print(i)
+  fate = totalR(comparR(query = refFin, cell = i))
+  refFate[i] = list(fate)
+}
+names(refFate) = colnames(refFin)
+
+outFate = vector(mode = 'list', length = ncol(outFin))
+outq = outFin[rownames(outFin) %in% rownames(avgFin),]
+outavg = avgFin[rownames(avgFin) %in% rownames(outFin),]
+for(i in 1:ncol(outFin)){
+  print(i)
+  fate = totalR(comparR(query = outq,avg = outavg, cell = i))
+  outFate[i] = list(fate)
+}
+names(outFate) = colnames(outFin)
+```
+
+```{r Save Fate Scores}
+saveRDS(qryFate, file = 'Query_fate_scores.rds')
+saveRDS(refFate, file = 'Reference_fate_scores.rds')
+saveRDS(outFate, file = 'Outside_fate_scores.rds')
+```
+
+```{r Load Fate Scores}
+qryFate = readRDS(file = 'Query_fate_scores.rds')
+refFate = readRDS(file = 'Reference_fate_scores.rds')
+outFate = readRDS(file = 'Outside_fate_scores.rds')
+```
+
+```{r Extract Labels for Each Time in Query}
+
+levels(qryTimes)
+D0 = names(qryTimes[qryTimes == "IMR90_iBMEC_D0"])
+D0 = gsub("-", ".", D0)
+
+D3 = names(qryTimes[qryTimes == "IMR90_iBMEC_D3"])
+D3 = gsub("-", ".", D3)
+
+D6 = names(qryTimes[qryTimes == "IMR90_iBMEC_D6"])
+D6 = gsub("-", ".", D6)
+
+D11 = names(qryTimes[qryTimes == "IMR90_iBMEC_D11"])
+D11 = gsub("-", ".", D11)
+
+D16 = names(qryTimes[qryTimes == "IMR90_iBMEC_D16"])
+D16 = gsub("-", ".", D16)
+
+D50 = names(qryTimes[qryTimes == "IMR90_iBMEC_D50"])
+D50 = gsub("-", ".", D50)
+
+rEC = names(qryTimes[qryTimes == "IMR90_rEC"])
+rEC = gsub("-", ".", rEC)
+
+BMEC = names(qryTimes[qryTimes == "primary_BMEC"])
+BMEC = gsub("-", ".", BMEC)
+
+HUVEC = names(qryTimes[qryTimes == "HUVEC"])
+HUVEC = gsub("-", ".", HUVEC)
+```
+
+
+
+
+
+```{r Extract Labels for Each Type in Reference}
+
+glial = names(cellTypes[cellTypes == 'Bergmann glial cell'])
+CD8T = names(cellTypes[cellTypes == 'CD8-positive, alpha-beta T cell'])
+ESC = names(cellTypes[cellTypes == 'ESC'])
+Tcell = names(cellTypes[cellTypes == 'T cell'])
+astr = names(cellTypes[cellTypes == 'astrocyte'])
+peri = names(cellTypes[cellTypes == 'brain pericyte'])
+endo = names(cellTypes[cellTypes == 'endothelial cell'])
+epen = names(cellTypes[cellTypes == 'ependymal cell'])
+interneur = names(cellTypes[cellTypes == 'interneuron'])
+macro = names(cellTypes[cellTypes == 'macrophage'])
+NKT = names(cellTypes[cellTypes == 'mature NK T cell'])
+spinyneur = names(cellTypes[cellTypes == 'medium spiny neuron'])
+microgl = names(cellTypes[cellTypes == 'microglial cell'])
+neuro = names(cellTypes[cellTypes == 'neuron'])
+neuroSC = names(cellTypes[cellTypes == 'neuronal stem cell'])
+oligo = names(cellTypes[cellTypes == 'oligodendrocyte'])
+preoligo = names(cellTypes[cellTypes == 'oligodendrocyte precursor cell'])
+epineur = names(cellTypes[cellTypes == 'neuroepithelial cell'])
+```
+
+```{r Separate by Day in query and Type in reference}
+
+# find the names of cells that fit each category
+  # day/type in query
+  # type in reference
+
+# Query
+D0_exp = qryFate[names(qryFate) %in% D0]
+HUVEC_exp = qryFate[names(qryFate) %in% HUVEC]
+D3_exp = qryFate[names(qryFate) %in% D3]
+D6_exp = qryFate[names(qryFate) %in% D6]
+D11_exp = qryFate[names(qryFate) %in% D11]
+D16_exp = qryFate[names(qryFate) %in% D16]
+D50_exp = qryFate[names(qryFate) %in% D50]
+rEC_exp = qryFate[names(qryFate) %in% rEC]
+BMEC_exp = qryFate[names(qryFate) %in% BMEC]
+
+# Reference
+glial_exp = refFate[names(refFate) %in% glial]
+CD8T_exp = refFate[names(refFate) %in% CD8T]
+ESC_exp = refFate[names(refFate) %in% ESC]
+Tcell_exp = refFate[names(refFate) %in% Tcell]
+astr_exp = refFate[names(refFate) %in% astr]
+peri_exp = refFate[names(refFate) %in% peri]
+endo_exp = refFate[names(refFate) %in% endo]
+epen_exp = refFate[names(refFate) %in% epen]
+interneur_exp = refFate[names(refFate) %in% interneur]
+macro_exp = refFate[names(refFate) %in% macro]
+NKT_exp = refFate[names(refFate) %in% NKT]
+spinyneur_exp = refFate[names(refFate) %in% spinyneur]
+microgl_exp = refFate[names(refFate) %in% microgl]
+epineur_exp = refFate[names(refFate) %in% epineur]
+neuro_exp = refFate[names(refFate) %in% neuro]
+neuroSC_exp = refFate[names(refFate) %in% neuroSC]
+oligo_exp = refFate[names(refFate) %in% oligo]
+preoligo_exp = refFate[names(refFate) %in% preoligo]
+```
+
+```{r Average Scores}
+QRT = c(averageR(scor = HUVEC_exp, typ = 'ESC'),
+        averageR(scor = D0_exp, typ = 'ESC'),
+        averageR(scor = D3_exp, typ = 'ESC'),
+        averageR(scor = D6_exp, typ = 'ESC'),
+        averageR(scor = D11_exp, typ = 'ESC'),
+        averageR(scor = D16_exp, typ = 'ESC'),
+        averageR(scor = D50_exp, typ = 'ESC'),
+        averageR(scor = rEC_exp, typ = 'ESC'),
+        averageR(scor = BMEC_exp, typ = 'ESC'))
+names(QRT) = levels(qryTimes)
+
+REFT = c(averageR(scor = glial_exp, typ = 'ESC'),
+         averageR(scor = CD8T_exp, typ = 'ESC'),
+         averageR(scor = ESC_exp, typ = 'ESC'),
+         averageR(scor = Tcell_exp, typ = 'ESC'),
+         averageR(scor = astr_exp, typ = 'ESC'),
+         averageR(scor = peri_exp, typ = 'ESC'),
+         averageR(scor = endo_exp, typ = 'ESC'),
+         averageR(scor = epen_exp, typ = 'ESC'),
+         averageR(scor = interneur_exp, typ = 'ESC'),
+         averageR(scor = macro_exp, typ = 'ESC'),
+         averageR(scor = NKT_exp, typ = 'ESC'),
+         averageR(scor = spinyneur_exp, typ = 'ESC'),
+         averageR(scor = microgl_exp, typ = 'ESC'),
+         averageR(scor = epineur_exp, typ = 'ESC'),
+         averageR(scor = neuro_exp, typ = 'ESC'),
+         averageR(scor = neuroSC_exp, typ = 'ESC'),
+         averageR(scor = oligo_exp, typ = 'ESC'),
+         averageR(scor = preoligo_exp, typ = 'ESC'))
+names(REFT) = levels(cellTypes)
+```
+
+
 ```{r}
-
-# when comparing to outsourced data, be sure to restrict comparison to those genes that overlap
-
-# comparR(query = outFin[rownames(outFin) %in% rownames(avgFin),], 
-#         cell = 3576, 
-#         avg = avgFin[rownames(avgFin) %in% rownames(outFin),])
+qry_bind = cbind(QRT[2:7], c(0,3,6,11,16,50))
+colnames(qry_bind) = c('score', 'day')
+qry_bind = as.data.frame(qry_bind)
 ```
 
 ```{r}
-tes <- comparR(query = qryFin, cell = 30)
+query_plots <- ggplot(data = qry_bind, mapping = aes(x = day, y = score))
+query_plots + geom_point()
+```
+```{r}
+ref_bind = cbind(REFT, names(REFT))
+colnames(ref_bind) = c('score', 'type')
+ref_bind = as.data.frame(ref_bind)
+
+ref_plots <- ggplot(data = ref_bind, mapping = aes(x = type, y = score))
+ref_plots + geom_point()
 ```
 
+
+
+
+
 ```{r}
-sum(tes$`Bergmann glial cell`)
+extractR(index = 10)
 ```
+
+
+```{r}
+outFate
+```
+
+
+
+
+
+
+
+
+
 
 
 
