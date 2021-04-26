@@ -66,11 +66,11 @@ subsetR <- function(data = refTrim, labels = cellTypes, type = 'oligodendrocyte'
 
 # find (average) differential gene expression between reference type and all reference types
 
-diffMakR <- function(avg = avgFin, cell = ''){
+diffMakR <- function(avg = avgFin, cell = '', top = 1000, bot = 50){
   joint = c()
   avgdiff = sort(avg[,colnames(avg) == cell] - rowMeans(avg))
-  top = names(tail(avgdiff, 1000))
-  bottom = names(head(avgdiff, 40))
+  top = names(tail(avgdiff, top))
+  bottom = names(head(avgdiff, bot))
   joint = c(joint, list(top))
   joint = c(joint, list(bottom))
   names(joint) = c('high', 'low')
@@ -82,13 +82,13 @@ diffMakR <- function(avg = avgFin, cell = ''){
 # compare expression profile of desired cell against averages for all types
 # report list of overlaps
 
-comparR <- function(avg = avgFin, query = qryFin, cell = 1){
+comparR <- function(avg = avgFin, query = qryFin, cell = 1, top = 1000, bot = 50){
   
   #  find differential expression between query cell and average across type
   joint = c()
   avgdiff = sort(query[,cell] - rowMeans(avg))
-  top = names(tail(avgdiff, 1000))
-  bottom = names(head(avgdiff, 40))
+  top = names(tail(avgdiff, top))
+  bottom = names(head(avgdiff, bot))
   joint = c(joint, list(top))
   joint = c(joint, list(bottom))
   names(joint) = c('high', 'low')
@@ -153,4 +153,29 @@ diffSumR <- function(quant){
   names(diffSum) = colnames(avgFin)
   # names(which.min(diffSum))
   diffSum
+}
+
+totalR  <- function(comparison){
+  Tot = c()
+  for(name in names(comparison)){
+    tot = sum(comparison[[name]])
+    Tot = append(Tot, tot)
+  }
+  names(Tot) = names (comparison)
+  Tot
+}
+
+extractR <- function(scores = D0_exp, index = 1, type = 'ESC'){
+  typscr = scores[[index]][[type]]
+  totscr = sum(scores[[index]])
+  typscr/totscr
+}
+
+averageR <- function(scor = D0_exp, typ = 'ESC'){
+  averages = c()
+  for(i in 1:length(scor)){
+    avg = extractR(scores = scor, index = i, type = typ)
+    averages = append(averages, avg)
+  }
+  mean(averages)
 }
