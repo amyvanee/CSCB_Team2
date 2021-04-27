@@ -1,0 +1,442 @@
+---
+title: "EN.580.647 Computational Stem Cell Biology: Project 6"
+author: "Amy van Ee"
+date: "27 April 2021"
+output: pdf_document
+latex_engine: xelatex
+---
+  
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(message=FALSE, 
+tidy.opts=list(width.cutoff=60)) 
+```
+
+```{r}
+#--------------------------------- PROJECT 6 ----------------------------------#
+```
+
+```{r}
+#------------------------------------------------------------------------------#
+#---------------------------------  SET UP  -----------------------------------#
+#------------------------------------------------------------------------------#
+
+source("helper.R")
+
+library(dplyr)
+library(RColorBrewer)
+library(rgl)
+library(ggplot2)
+
+```
+
+```{r}
+# load similarity counts
+refSim <- readRDS("Reference_fate_scores.rds")
+querySim <- readRDS("Query_fate_scores.rds")
+dropSim <- readRDS("Droplet_fate_scores.rds")
+trueCellTypes <- read.csv("TruecellType_OutData.csv")
+
+# load original data
+refData <- LoadH5Seurat("TS_Ref_2021.h5seurat")
+queryData <- LoadH5Seurat("Lu_Query_2021.h5seurat")
+
+
+```
+
+
+```{r}
+################################################################################
+numCellSamples <- length(querySim)    # total number of samples (9894)
+cellClasses <- names(querySim[[1]])      # reference data cell types
+
+
+################################################################################
+# subset by each time sample group
+qryTimes = queryData$sample
+
+D0 = names(qryTimes[qryTimes == "IMR90_iBMEC_D0"])
+D0 = gsub("-", ".", D0)
+queryD0 = querySim[D0]
+
+D3 = names(qryTimes[qryTimes == "IMR90_iBMEC_D3"])
+D3 = gsub("-", ".", D3)
+queryD3 = querySim[D3]
+
+D6 = names(qryTimes[qryTimes == "IMR90_iBMEC_D6"])
+D6 = gsub("-", ".", D6)
+queryD6 = querySim[D6]
+
+D11 = names(qryTimes[qryTimes == "IMR90_iBMEC_D11"])
+D11 = gsub("-", ".", D11)
+queryD11 = querySim[D11]
+
+D16 = names(qryTimes[qryTimes == "IMR90_iBMEC_D16"])
+D16 = gsub("-", ".", D16)
+queryD16 = querySim[D16]
+
+D50 = names(qryTimes[qryTimes == "IMR90_iBMEC_D50"])
+D50 = gsub("-", ".", D50)
+queryD50 = querySim[D50]
+
+rEC = names(qryTimes[qryTimes == "IMR90_rEC"])
+rEC = gsub("-", ".", rEC)
+queryrEC = querySim[rEC]
+
+BMEC = names(qryTimes[qryTimes == "primary_BMEC"])
+BMEC = gsub("-", ".", BMEC)
+queryBMEC = querySim[BMEC]
+
+HUVEC = names(qryTimes[qryTimes == "HUVEC"])
+HUVEC = gsub("-", ".", HUVEC)
+queryHUVEC = querySim[HUVEC]
+
+# 
+# ################################################################################
+# # subset by each true cell type
+# cellTypes = refData$cell_type
+# 
+# glial = names(cellTypes[cellTypes == 'Bergmann glial cell'])
+# CD8T = names(cellTypes[cellTypes == 'CD8-positive, alpha-beta T cell'])
+# ESC = names(cellTypes[cellTypes == 'ESC'])
+# Tcell = names(cellTypes[cellTypes == 'T cell'])
+# astr = names(cellTypes[cellTypes == 'astrocyte'])
+# peri = names(cellTypes[cellTypes == 'brain pericyte'])
+# endo = names(cellTypes[cellTypes == 'endothelial cell'])
+# epen = names(cellTypes[cellTypes == 'ependymal cell'])
+# interneur = names(cellTypes[cellTypes == 'interneuron'])
+# macro = names(cellTypes[cellTypes == 'macrophage'])
+# NKT = names(cellTypes[cellTypes == 'mature NK T cell'])
+# spinyneur = names(cellTypes[cellTypes == 'medium spiny neuron'])
+# microgl = names(cellTypes[cellTypes == 'microglial cell'])
+# neuro = names(cellTypes[cellTypes == 'neuron'])
+# neuroSC = names(cellTypes[cellTypes == 'neuronal stem cell'])
+# oligo = names(cellTypes[cellTypes == 'oligodendrocyte'])
+# preoligo = names(cellTypes[cellTypes == 'oligodendrocyte precursor cell'])
+# epineur = names(cellTypes[cellTypes == 'neuroepithelial cell'])
+
+```
+
+
+
+
+```{r}
+#------------------------------------------------------------------------------#
+#------------------------------  FUNCTIONS  -----------------------------------#
+#------------------------------------------------------------------------------#
+```
+
+
+```{r}
+
+################################################################################
+# create a dataframe where we show cell sample and its highest score cell type
+classifySamples <- function(query){
+
+  numCellSamples <- length(query)
+  classes <- c()                     # classification of each cell sample
+  
+  for (i in 1:numCellSamples){
+    
+    list <- query[[i]]
+  
+    # find largest score
+    max <- which.max(list)
+    
+    # find cell type with largest score
+    class <- names(max)
+    
+    # set this cell sample to be that cell type
+    classes <- c(classes, class)
+    
+  }
+  
+  # create a dataframe with cell samples and corresponding classifications
+  classificationsdf <- data.frame(cellSample = names(query), 
+                                cellClass = classes)
+  
+  return(classificationsdf)
+}
+
+```
+
+```{r}
+################################################################################
+# create bar graph of all classifications
+
+bakePie <- function(classifications, sampleSet){
+
+  counts <- count(classifications, cellClass)
+  counts <- cbind(counts, prop = round(counts$n / sum(counts$n) * 100, 2))  # add column with percentages
+  
+  for (i in 1:nrow(counts)){
+    counts$cellClass[i] <- paste(counts$cellClass[i],": ",counts$prop[i],"%")
+  }
+  
+  ggplot(counts, aes(x = "", y = prop, fill = cellClass)) +
+    geom_bar(width = 1, stat = "identity", color = "white") +
+    coord_polar("y", start = 0) +
+    ggtitle(paste("Distribution of Classified Cell Types: ", sampleSet)) + 
+    theme_void()
+}
+
+```
+
+
+
+```{r}
+
+################################################################################
+# create PR curve
+
+# function to produce PR curve for given  cellType
+get_PR_point <- function(theta, pred, cellType){
+  
+  # convert to binary based on threshold
+  pred[pred >= theta] <- 1
+  pred[pred != 1] <- 0
+  
+  # convert cellType classifications into binary for each sample in true
+  actual <- trimmedTrue$Cell.Type
+  actual[which(trimmedTrue$Cell.Type == cellType)] <- 1
+  actual[actual != 1] <- 0
+  actual <- as.numeric(actual)
+  
+  # compute values for PR
+  totalActualPos <- sum(actual)
+  totalActualNeg <- length(actual) - totalActualPos
+  
+  truePosSamples <- actual[actual == 1 & pred == 1]
+  truePos <- length(truePosSamples)
+  
+  trueNegSamples <- actual[actual == 0 & pred == 0]
+  trueNeg <- length(trueNegSamples)
+  
+  # total predicted neg - true Neg
+  falseNeg <- (nrow(pred) - sum(pred)) - trueNeg
+  falsePos <- sum(pred) - truePos
+  
+  # get recall
+  recall <- truePos / (truePos + falseNeg)
+  
+  # get precision
+  precision <- truePos / (truePos + falsePos)
+  
+  return(c(recall, precision))
+}
+```
+
+
+
+
+```{r}
+#------------------------------------------------------------------------------#
+#------------------------------  DROPLET DATA  --------------------------------#
+#------------------------------------------------------------------------------#
+```
+
+```{r}
+
+################################################################################
+# create bar graph of all classifications
+
+classifications_drop <- classifySamples(dropSim)
+bakePie(classifications_drop, "External Mouse Aorta Data")
+
+```
+
+```{r}
+
+################################################################################
+# calculate overall accuracy
+
+# set NA to 0 for comparison
+trueCellTypes$Cell.Type[is.na(trueCellTypes$Cell.Type)] <- 0
+
+# calculate accuracy
+overallAccuracy <- sum(classifications_drop$cellClass == trueCellTypes$Cell.Type) / nrow(classifications_drop)
+
+# print
+overallAccuracy
+
+```
+
+
+
+```{r}
+
+################################################################################
+# calculate EC specific accuracy
+
+# how many of true EC were predicted to be EC?
+
+ECindices <- which(trueCellTypes$Cell.Type == 'endothelial cell')
+trueEC <- trueCellTypes[ECindices, ]
+predEC <- classifications_drop[ECindices, ]
+
+ECAccuracy <- sum(predEC$cellClass == trueEC$Cell.Type) / nrow(predEC)
+
+ECAccuracy
+
+```
+
+
+
+```{r}
+################################################################################
+# get data ready for PR curve
+
+# drop any NA (we had set to 0) from true class and make sure match with predicted set
+indices2keep <- which(trueCellTypes$Cell.Type != 0)
+trimmedTrue <- trueCellTypes[indices2keep, ]
+trimmedPred <- classifications_drop[indices2keep, ]
+trimmedDropSim <- dropSim[indices2keep]
+
+indices2keep2 <- which(trimmedTrue$Cell.Type != "")
+trimmedTrue <- trimmedTrue[indices2keep2, ]
+trimmedPred <- trimmedPred[indices2keep2, ]
+trimmedDropSim <- trimmedDropSim[indices2keep2]
+
+
+# normalize similarity values by divide each value by 1050
+for (i in 1:length(trimmedDropSim)){
+  trimmedDropSim[[i]] <- trimmedDropSim[[i]] / 1050
+}
+
+
+
+# create a dataframe with similarities to each cell type
+
+predSimilarities <- data.frame(cellSamples = trimmedPred$cellSample)
+
+for (i in 1:length(cellClasses)){
+  similarities <- c()
+  
+  # get similarity value to given cell type for each sample
+  for (j in 1:length(trimmedDropSim)){
+    similarities <- c(similarities, trimmedDropSim[[j]][i])
+  }
+  
+  # add to growing dataframe
+  predSimilarities <- cbind(predSimilarities, similarities)
+  
+}
+
+colnames(predSimilarities) <- c("cellSamples", cellClasses)
+
+```
+
+
+```{r}
+
+################################################################################
+# create bar graph of TRUE  classifications
+
+trueCounts <- count(trimmedTrue, Cell.Type)
+trueCounts <- cbind(trueCounts, prop = round(trueCounts$n / sum(trueCounts$n) * 100, 2))  # add column with percentages
+
+for (i in 1:nrow(trueCounts)){
+  trueCounts$Cell.Type[i] <- paste(trueCounts$Cell.Type[i],": ",trueCounts$prop[i],"%")
+}
+
+ggplot(trueCounts, aes(x = "", y = prop, fill = Cell.Type)) +
+  geom_bar(width = 1, stat = "identity", color = "white") +
+  coord_polar("y", start = 0) +
+  ggtitle(paste("Distribution of True Cell Types: External Mouse Aorta Data")) + 
+  theme_void()
+
+```
+
+
+```{r}
+################################################################################
+# create PR curve
+
+# PR curve for endothelial
+
+cellindices <- c(7)
+
+for (i in cellindices){
+  
+  AUC <- 0
+  
+  # vectors of x and y points for one PR graph
+  precision_values <- c()
+  recall_values <- c()
+  
+  
+  # change threshold to create curve
+  for (theta in seq(0, 1, by=0.001)){
+    
+    # input theta threshold, similarities for cell type (offset by 1 since column 1 is IDs), true classifications 
+    PR_point <- get_PR_point(theta, predSimilarities[i+1],  cellClasses[i])
+    recall_values <- c(recall_values, PR_point[1])
+    precision_values <- c(precision_values, PR_point[2])
+  }
+  
+  
+  
+  # get auc and remove any NaN
+  recall_values <- na.omit(recall_values)
+  precision_values <- na.omit(precision_values)
+  
+  # make sure lengths match up
+  if (length(recall_values) > length(precision_values)){  
+    recall_values <- head(recall_values, (length(precision_values) - length(recall_values)))
+  }
+  else if (length(recall_values) < length(precision_values)){  
+    precision_values <- head(precision_values, (length(recall_values) - length(precision_values)))
+  }
+
+  # find AUC
+  trapezoid <- function(x,y) {
+    sum(diff(x)*(y[-1]+y[-length(y)]))/2
+  }
+  AUC <- trapezoid(recall_values, precision_values) *-1
+  
+  # plot final graph
+  plot(recall_values, precision_values, 
+       main = paste("PR Curve for ", cellClasses[i], "(AUC: ", round(AUC, 2), ")"), 
+       xlab = "Recall", ylab = "Precision")
+}
+```
+
+
+
+```{r}
+#------------------------------------------------------------------------------#
+#-------------------------------  QUERY DATA  ---------------------------------#
+#------------------------------------------------------------------------------#
+```
+
+
+```{r}
+################################################################################
+# get classifications for all samples
+
+classifications_D0 <- classifySamples(queryD0)
+bakePie(classifications_D0, "IMR90_iBMEC_D0")
+
+classifications_D3 <- classifySamples(queryD3)
+bakePie(classifications_D3, "IMR90_iBMEC_D3")
+
+classifications_D6 <- classifySamples(queryD6)
+bakePie(classifications_D6, "IMR90_iBMEC_D6")
+
+classifications_D11 <- classifySamples(queryD11)
+bakePie(classifications_D11, "IMR90_iBMEC_D11")
+
+classifications_D16 <- classifySamples(queryD16)
+bakePie(classifications_D16, "IMR90_iBMEC_D16")
+
+classifications_D50 <- classifySamples(queryD50)
+bakePie(classifications_D50, "IMR90_iBMEC_D50")
+
+classifications_rEC <- classifySamples(queryrEC)
+bakePie(classifications_rEC, "IMR90_rEC")
+
+classifications_BMEC <- classifySamples(queryBMEC)
+bakePie(classifications_BMEC, "primary_BMEC")
+
+classifications_HUVEC <- classifySamples(queryHUVEC)
+bakePie(classifications_HUVEC, "HUVEC")
+```
